@@ -1,4 +1,4 @@
-FROM golang:1.21
+FROM golang:1.21.4-bookworm
 
 RUN mkdir -p /home/webapp
 WORKDIR /home/webapp
