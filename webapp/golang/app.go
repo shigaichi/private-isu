@@ -170,6 +170,7 @@ func getFlash(w http.ResponseWriter, r *http.Request, key string) string {
 }
 
 func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, error) {
+	log.Println("make posts start")
 	// results
 	var posts []Post
 
@@ -442,6 +443,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 
 	results := []Post{}
 
+	//FIXME: user_idにインデックス　LIMITをつける
 	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `user_id` = ? ORDER BY `created_at` DESC", user.ID)
 	if err != nil {
 		log.Print(err)
@@ -454,6 +456,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	//FIXME: user_idにインデックス
 	commentCount := 0
 	err = db.Get(&commentCount, "SELECT COUNT(*) AS count FROM `comments` WHERE `user_id` = ?", user.ID)
 	if err != nil {
