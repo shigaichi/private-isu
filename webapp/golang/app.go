@@ -19,6 +19,7 @@ import (
 	"github.com/bradfitz/gomemcache/memcache"
 	gsm "github.com/bradleypeabody/gorilla-sessions-memcache"
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
@@ -830,6 +831,8 @@ func main() {
 	defer db.Close()
 
 	r := chi.NewRouter()
+
+	r.Mount("/debug", middleware.Profiler())
 
 	r.Get("/initialize", getInitialize)
 	r.Get("/login", getLogin)
