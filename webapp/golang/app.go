@@ -78,12 +78,9 @@ func init() {
 }
 
 func dbInitialize() {
+	// ここ一行にする
 	sqls := []string{
-		"DELETE FROM users WHERE id > 1000",
-		"DELETE FROM posts WHERE id > 10000",
-		"DELETE FROM comments WHERE id > 100000",
-		"UPDATE users SET del_flg = 0",
-		"UPDATE users SET del_flg = 1 WHERE id % 50 = 0",
+		"DELETE FROM users WHERE id > 1000;DELETE FROM posts WHERE id > 10000;DELETE FROM comments WHERE id > 100000;UPDATE users SET del_flg = 0;UPDATE users SET del_flg = 1 WHERE id % 50 = 0",
 	}
 
 	for _, sql := range sqls {
@@ -173,9 +170,11 @@ func getFlash(w http.ResponseWriter, r *http.Request, key string) string {
 }
 
 func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, error) {
+	// results
 	var posts []Post
 
 	for _, p := range results {
+		// 各postのコメントを取得
 		err := db.Get(&p.CommentCount, "SELECT COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?", p.ID)
 		if err != nil {
 			return nil, err
@@ -216,10 +215,12 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 			posts = append(posts, p)
 		}
 		if len(posts) >= postsPerPage {
+			// 参照
 			break
 		}
 	}
 
+	// 各postは削除されているものを除き20を超えたら切り捨て　上記参照
 	return posts, nil
 }
 
@@ -387,7 +388,15 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 
 	results := []Post{}
 
-	err := db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` ORDER BY `created_at` DESC")
+	query := `
+SELECT posts.id, user_id, body, mime, posts.created_at
+FROM posts
+		 JOIN users u ON u.id = posts.user_id
+WHERE u.del_flg = 0
+ORDER BY posts.created_at DESC
+LIMIT 20;
+`
+	err := db.Select(&results, query)
 	if err != nil {
 		log.Print(err)
 		return
@@ -816,7 +825,7 @@ func main() {
 	}
 
 	dsn := fmt.Sprintf(
-		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=Local",
+		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=Local&multiStatements=true",
 		user,
 		password,
 		host,
