@@ -175,6 +175,7 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 
 	for _, p := range results {
 		// 各postのコメントを取得
+		log.Printf("SELECT COUNT(*) post_id = %d\n", p.ID)
 		err := db.Get(&p.CommentCount, "SELECT COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?", p.ID)
 		if err != nil {
 			return nil, err
