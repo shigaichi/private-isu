@@ -786,7 +786,7 @@ func main() {
 	}
 
 	dsn := fmt.Sprintf(
-		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=Local&multiStatements=true",
+		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=Local&multiStatements=true&interpolateParams=true",
 		user,
 		password,
 		host,
