@@ -170,7 +170,6 @@ func getFlash(w http.ResponseWriter, r *http.Request, key string) string {
 }
 
 func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, error) {
-	log.Println("make posts start")
 	// results
 	var posts []Post
 
@@ -382,48 +381,6 @@ func getLogout(w http.ResponseWriter, r *http.Request) {
 	session.Save(r, w)
 
 	http.Redirect(w, r, "/", http.StatusFound)
-}
-
-func getIndex(w http.ResponseWriter, r *http.Request) {
-	me := getSessionUser(r)
-
-	results := []Post{}
-
-	query := `
-SELECT posts.id, user_id, body, mime, posts.created_at
-FROM posts
-		 JOIN users u ON u.id = posts.user_id
-WHERE u.del_flg = 0
-ORDER BY posts.created_at DESC
-LIMIT 20;
-`
-	err := db.Select(&results, query)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	posts, err := makePosts(results, getCSRFToken(r), false)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
-
-	template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("index.html"),
-		getTemplPath("posts.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, struct {
-		Posts     []Post
-		Me        User
-		CSRFToken string
-		Flash     string
-	}{posts, me, getCSRFToken(r), getFlash(w, r, "notice")})
 }
 
 func getAccountName(w http.ResponseWriter, r *http.Request) {
