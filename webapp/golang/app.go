@@ -176,7 +176,6 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 
 	for _, p := range results {
 		// 各postのコメントを取得
-		log.Printf("SELECT COUNT(*) post_id = %d\n", p.ID)
 		err := db.Get(&p.CommentCount, "SELECT SQL_NO_CACHE COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?", p.ID)
 		if err != nil {
 			return nil, err
@@ -640,6 +639,7 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ファイルを保存
+	log.Printf("/home/isucon/image/storage/%d.%s\n", pid, determineExtension(mime))
 	filename := fmt.Sprintf("/home/isucon/image/storage/%d.%s", pid, determineExtension(mime))
 	if err := ioutil.WriteFile(filename, filedata, 0644); err != nil {
 		log.Print(err)
