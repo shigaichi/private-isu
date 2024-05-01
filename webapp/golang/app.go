@@ -623,8 +623,8 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 	result, err := db.Exec(
 		query,
 		me.ID,
-		mime,
-		filedata,
+		//mime,
+		//filedata,
 		r.FormValue("body"),
 	)
 	if err != nil {
@@ -665,7 +665,7 @@ func determineExtension(mime string) string {
 
 // 呼ばれないはず
 func getImage(w http.ResponseWriter, r *http.Request) {
-	log.Println("getImage called")
+	log.Fatal("getImage called")
 	pidStr := chi.URLParam(r, "id")
 	pid, err := strconv.Atoi(pidStr)
 	if err != nil {
