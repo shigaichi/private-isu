@@ -518,14 +518,11 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
+	//fmap := template.FuncMap{
+	//	"imageURL": imageURL,
+	//}
 
-	template.Must(template.New("posts.html").Funcs(fmap).ParseFiles(
-		getTemplPath("posts.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, posts)
+	templates["get_post"].Execute(w, posts)
 }
 
 func getPostsID(w http.ResponseWriter, r *http.Request) {
@@ -558,15 +555,11 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 
 	me := getSessionUser(r)
 
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
+	//fmap := template.FuncMap{
+	//	"imageURL": imageURL,
+	//}
 
-	template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("post_id.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, struct {
+	templates["get_post_id"].Execute(w, struct {
 		Post Post
 		Me   User
 	}{p, me})
@@ -836,7 +829,7 @@ func main() {
 
 	r := chi.NewRouter()
 
-	//TODO: もっと増やす
+	// TODO: もっと増やす
 	// TODO: 関数に移動
 	loadTemplate(getTemplPath("layout.html"), getTemplPath("login.html"))
 	loadTemplate(getTemplPath("layout.html"), getTemplPath("register.html"))
@@ -851,6 +844,17 @@ func main() {
 		getTemplPath("post.html"),
 	))
 	templates["get_index"] = indexTempl
+
+	templates["get_post"] = template.Must(template.New("posts.html").Funcs(fmap).ParseFiles(
+		getTemplPath("posts.html"),
+		getTemplPath("post.html"),
+	))
+
+	templates["get_post_id"] = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+		getTemplPath("layout.html"),
+		getTemplPath("post_id.html"),
+		getTemplPath("post.html"),
+	))
 
 	r.Mount("/debug", middleware.Profiler())
 
