@@ -1,7 +1,6 @@
 package main
 
 import (
-	"html/template"
 	"log"
 	"net/http"
 )
@@ -9,6 +8,7 @@ import (
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
+	// 投稿一覧画面ではAccountNameしか使われていない
 	results := []Post{}
 
 	query := `
@@ -31,16 +31,11 @@ LIMIT 20;
 		return
 	}
 
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
+	//fmap := template.FuncMap{
+	//	"imageURL": imageURL,
+	//}
 
-	template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("index.html"),
-		getTemplPath("posts.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, struct {
+	templates["get_index"].Execute(w, struct {
 		Posts     []Post
 		Me        User
 		CSRFToken string

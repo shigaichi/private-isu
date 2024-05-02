@@ -28,8 +28,9 @@ import (
 )
 
 var (
-	db    *sqlx.DB
-	store *gsm.MemcacheStore
+	db        *sqlx.DB
+	store     *gsm.MemcacheStore
+	templates = make(map[string]*template.Template)
 )
 
 const (
@@ -192,7 +193,7 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 
 	for _, p := range results {
 		// 各postのコメントを取得
-		err := db.Get(&p.CommentCount, "SELECT SQL_NO_CACHE COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?", p.ID)
+		err := db.Get(&p.CommentCount, "SELECT COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?", p.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -292,10 +293,7 @@ func getLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	template.Must(template.ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("login.html")),
-	).Execute(w, struct {
+	templates["layout.html_login.html"].Execute(w, struct {
 		Me    User
 		Flash string
 	}{me, getFlash(w, r, "notice")})
@@ -331,10 +329,7 @@ func getRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	template.Must(template.ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("register.html")),
-	).Execute(w, struct {
+	templates["layout.html_register.html"].Execute(w, struct {
 		Me    User
 		Flash string
 	}{User{}, getFlash(w, r, "notice")})
@@ -841,6 +836,22 @@ func main() {
 
 	r := chi.NewRouter()
 
+	//TODO: もっと増やす
+	// TODO: 関数に移動
+	loadTemplate(getTemplPath("layout.html"), getTemplPath("login.html"))
+	loadTemplate(getTemplPath("layout.html"), getTemplPath("register.html"))
+	fmap := template.FuncMap{
+		"imageURL": imageURL,
+	}
+
+	indexTempl := template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+		getTemplPath("layout.html"),
+		getTemplPath("index.html"),
+		getTemplPath("posts.html"),
+		getTemplPath("post.html"),
+	))
+	templates["get_index"] = indexTempl
+
 	r.Mount("/debug", middleware.Profiler())
 
 	r.Get("/initialize", getInitialize)
@@ -863,4 +874,12 @@ func main() {
 	})
 
 	log.Fatal(http.ListenAndServe(":8080", r))
+}
+
+func loadTemplate(filename ...string) {
+	key := strings.Join(filename, "_")
+
+	tmpl := template.Must(template.ParseFiles(filename...))
+
+	templates[key] = tmpl
 }
