@@ -1,11 +1,12 @@
 package main
 
 import (
-	"github.com/go-chi/chi/v5"
 	"html/template"
 	"log"
 	"net/http"
 	"strings"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func getAccountName(w http.ResponseWriter, r *http.Request) {

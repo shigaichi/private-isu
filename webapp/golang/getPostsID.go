@@ -1,10 +1,11 @@
 package main
 
 import (
-	"github.com/go-chi/chi/v5"
 	"log"
 	"net/http"
 	"strconv"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func getPostsID(w http.ResponseWriter, r *http.Request) {
