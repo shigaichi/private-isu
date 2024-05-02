@@ -293,7 +293,7 @@ func getLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	templates["layout.html_login.html"].Execute(w, struct {
+	templates["get_login"].Execute(w, struct {
 		Me    User
 		Flash string
 	}{me, getFlash(w, r, "notice")})
@@ -329,7 +329,7 @@ func getRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	templates["layout.html_register.html"].Execute(w, struct {
+	templates["get_register"].Execute(w, struct {
 		Me    User
 		Flash string
 	}{User{}, getFlash(w, r, "notice")})
@@ -831,8 +831,8 @@ func main() {
 
 	// TODO: もっと増やす
 	// TODO: 関数に移動
-	loadTemplate(getTemplPath("layout.html"), getTemplPath("login.html"))
-	loadTemplate(getTemplPath("layout.html"), getTemplPath("register.html"))
+	loadTemplate("get_login", getTemplPath("layout.html"), getTemplPath("login.html"))
+	loadTemplate("get_register", getTemplPath("layout.html"), getTemplPath("register.html"))
 	fmap := template.FuncMap{
 		"imageURL": imageURL,
 	}
@@ -880,10 +880,8 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8080", r))
 }
 
-func loadTemplate(filename ...string) {
-	key := strings.Join(filename, "_")
-
+func loadTemplate(tmplName string, filename ...string) {
 	tmpl := template.Must(template.ParseFiles(filename...))
 
-	templates[key] = tmpl
+	templates[tmplName] = tmpl
 }
