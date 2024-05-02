@@ -101,7 +101,7 @@ func tryLogin(accountName, password string) *User {
 	u := User{}
 	// TODO: del_flgにはインデックスは不要だと思う。物理削除する？
 	// TODO: postAdminBannedで削除されているが、これは呼ばれていない？
-	err := db.Get(&u, "SELECT id,account_name,passhash FROM users WHERE account_name = ? AND del_flg = 0", accountName)
+	err := db.Get(&u, "SELECT id AS user_id,account_name,passhash FROM users WHERE account_name = ? AND del_flg = 0", accountName)
 	if err != nil {
 		return nil
 	}
