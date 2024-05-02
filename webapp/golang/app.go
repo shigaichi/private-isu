@@ -56,8 +56,15 @@ type Post struct {
 	CreatedAt    time.Time `db:"post_created_at"`
 	CommentCount int
 	Comments     []Comment
-	User         User
-	CSRFToken    string
+	//User         User
+	CSRFToken string
+	// Userフィールドを展開して直接Post構造体に含める
+	//UserID         int       `db:"user_id"`
+	UserAccountName string    `db:"account_name"`
+	UserPasshash    string    `db:"passhash"`
+	UserAuthority   int       `db:"authority"`
+	UserDelFlg      int       `db:"del_flg"`
+	UserCreatedAt   time.Time `db:"user_created_at"`
 }
 
 type Comment struct {
@@ -229,9 +236,9 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 
 		p.CSRFToken = csrfToken
 
-		if p.User.DelFlg == 0 {
-			posts = append(posts, p)
-		}
+		//if p.User.DelFlg == 0 {
+		posts = append(posts, p)
+		//}
 		if len(posts) >= postsPerPage {
 			// 参照
 			break
@@ -499,35 +506,35 @@ func determineExtension(mime string) string {
 // 呼ばれないはず
 func getImage(w http.ResponseWriter, r *http.Request) {
 	log.Fatal("getImage called")
-	pidStr := chi.URLParam(r, "id")
-	pid, err := strconv.Atoi(pidStr)
-	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	post := Post{}
-	err = db.Get(&post, "SELECT * FROM `posts` WHERE `id` = ?", pid)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	ext := chi.URLParam(r, "ext")
-
-	if ext == "jpg" && post.Mime == "image/jpeg" ||
-		ext == "png" && post.Mime == "image/png" ||
-		ext == "gif" && post.Mime == "image/gif" {
-		w.Header().Set("Content-Type", post.Mime)
-		_, err := w.Write(post.Imgdata)
-		if err != nil {
-			log.Print(err)
-			return
-		}
-		return
-	}
-
-	w.WriteHeader(http.StatusNotFound)
+	//pidStr := chi.URLParam(r, "id")
+	//pid, err := strconv.Atoi(pidStr)
+	//if err != nil {
+	//	w.WriteHeader(http.StatusNotFound)
+	//	return
+	//}
+	//
+	//post := Post{}
+	//err = db.Get(&post, "SELECT * FROM `posts` WHERE `id` = ?", pid)
+	//if err != nil {
+	//	log.Print(err)
+	//	return
+	//}
+	//
+	//ext := chi.URLParam(r, "ext")
+	//
+	//if ext == "jpg" && post.Mime == "image/jpeg" ||
+	//	ext == "png" && post.Mime == "image/png" ||
+	//	ext == "gif" && post.Mime == "image/gif" {
+	//	w.Header().Set("Content-Type", post.Mime)
+	//	_, err := w.Write(post.Imgdata)
+	//	if err != nil {
+	//		log.Print(err)
+	//		return
+	//	}
+	//	return
+	//}
+	//
+	//w.WriteHeader(http.StatusNotFound)
 }
 
 func postComment(w http.ResponseWriter, r *http.Request) {

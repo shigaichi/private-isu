@@ -25,7 +25,6 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 
 	results := []Post{}
 
-	//TODO: LIMITをつける
 	query := `
 SELECT p.id         AS post_id,
        user_id      AS post_user_id,
@@ -41,7 +40,7 @@ SELECT p.id         AS post_id,
 FROM posts AS p STRAIGHT_JOIN users u ON u.id = p.user_id
 WHERE user_id = ?
   AND u.del_flg = 0
-ORDER BY created_at DESC
+ORDER BY p.created_at DESC
 LIMIT 20
 `
 	err = db.Select(&results, query, user.ID)
