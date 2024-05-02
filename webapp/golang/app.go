@@ -2,6 +2,8 @@ package main
 
 import (
 	crand "crypto/rand"
+	"crypto/sha512"
+	"encoding/hex"
 	"fmt"
 	"html/template"
 	"io"
@@ -10,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path"
 	"regexp"
 	"strconv"
@@ -91,7 +92,9 @@ func dbInitialize() {
 
 func tryLogin(accountName, password string) *User {
 	u := User{}
-	err := db.Get(&u, "SELECT * FROM users WHERE account_name = ? AND del_flg = 0", accountName)
+	// TODO: del_flgにはインデックスは不要だと思う。物理削除する？
+	// TODO: postAdminBannedで削除されているが、これは呼ばれていない？
+	err := db.Get(&u, "SELECT id,account_name,passhash FROM users WHERE account_name = ? AND del_flg = 0", accountName)
 	if err != nil {
 		return nil
 	}
@@ -115,15 +118,28 @@ func escapeshellarg(arg string) string {
 	return "'" + strings.Replace(arg, "'", "'\\''", -1) + "'"
 }
 
+//func digest(src string) string {
+//	// opensslのバージョンによっては (stdin)= というのがつくので取る
+//	out, err := exec.Command("/bin/bash", "-c", `printf "%s" `+escapeshellarg(src)+` | openssl dgst -sha512 | sed 's/^.*= //'`).Output()
+//	if err != nil {
+//		log.Print(err)
+//		return ""
+//	}
+//
+//	return strings.TrimSuffix(string(out), "\n")
+//}
+
 func digest(src string) string {
-	// opensslのバージョンによっては (stdin)= というのがつくので取る
-	out, err := exec.Command("/bin/bash", "-c", `printf "%s" `+escapeshellarg(src)+` | openssl dgst -sha512 | sed 's/^.*= //'`).Output()
-	if err != nil {
+	// SHA-512ハッシュオブジェクトを生成
+	hasher := sha512.New()
+	// データをハッシュオブジェクトに書き込み
+	if _, err := hasher.Write([]byte(src)); err != nil {
 		log.Print(err)
 		return ""
 	}
-
-	return strings.TrimSuffix(string(out), "\n")
+	// ハッシュを計算し、その結果を16進数でエンコード
+	hashed := hex.EncodeToString(hasher.Sum(nil))
+	return hashed
 }
 
 func calculateSalt(accountName string) string {
@@ -639,7 +655,6 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ファイルを保存
-	log.Printf("/home/isucon/image/storage/%d.%s\n", pid, determineExtension(mime))
 	filename := fmt.Sprintf("/home/isucon/image/storage/%d.%s", pid, determineExtension(mime))
 	if err := ioutil.WriteFile(filename, filedata, 0644); err != nil {
 		log.Print(err)
