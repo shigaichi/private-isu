@@ -56,8 +56,8 @@ type Post struct {
 	CreatedAt    time.Time `db:"post_created_at"`
 	CommentCount int
 	Comments     []Comment
-	//User         User
-	CSRFToken string
+	User         User
+	CSRFToken    string
 	// Userフィールドを展開して直接Post構造体に含める
 	//UserID         int       `db:"user_id"`
 	UserAccountName string    `db:"account_name"`
@@ -239,13 +239,24 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 		//if p.User.DelFlg == 0 {
 		posts = append(posts, p)
 		//}
-		if len(posts) >= postsPerPage {
-			// 参照
-			break
+		//if len(posts) >= postsPerPage {
+		//	// 参照
+		//	break
+		//}
+	}
+
+	// TODO: 詰め替えをするべきではない
+	for i := range posts {
+		posts[i].User = User{
+			ID:          posts[i].UserID,
+			AccountName: posts[i].UserAccountName,
+			Passhash:    posts[i].UserPasshash,
+			Authority:   posts[i].UserAuthority,
+			DelFlg:      posts[i].UserDelFlg,
+			CreatedAt:   posts[i].UserCreatedAt,
 		}
 	}
 
-	// 各postは削除されているものを除き20を超えたら切り捨て　上記参照
 	return posts, nil
 }
 
