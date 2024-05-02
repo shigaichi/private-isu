@@ -10,7 +10,6 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path"
 	"regexp"
@@ -40,21 +39,21 @@ const (
 )
 
 type User struct {
-	ID          int       `db:"id"`
+	ID          int       `db:"user_id"`
 	AccountName string    `db:"account_name"`
 	Passhash    string    `db:"passhash"`
 	Authority   int       `db:"authority"`
 	DelFlg      int       `db:"del_flg"`
-	CreatedAt   time.Time `db:"created_at"`
+	CreatedAt   time.Time `db:"user_created_at"`
 }
 
 type Post struct {
-	ID           int       `db:"id"`
-	UserID       int       `db:"user_id"`
+	ID           int       `db:"post_id"`
+	UserID       int       `db:"post_user_id"`
 	Imgdata      []byte    `db:"imgdata"`
 	Body         string    `db:"body"`
 	Mime         string    `db:"mime"`
-	CreatedAt    time.Time `db:"created_at"`
+	CreatedAt    time.Time `db:"post_created_at"`
 	CommentCount int
 	Comments     []Comment
 	User         User
@@ -166,7 +165,7 @@ func getSessionUser(r *http.Request) User {
 
 	u := User{}
 
-	err := db.Get(&u, "SELECT * FROM `users` WHERE `id` = ?", uid)
+	err := db.Get(&u, "SELECT id AS user_id, account_name, passhash, authority, del_flg, created_at AS user_created_at FROM `users` WHERE `id` = ?", uid)
 	if err != nil {
 		return User{}
 	}
@@ -209,7 +208,7 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 		}
 
 		for i := 0; i < len(comments); i++ {
-			err := db.Get(&comments[i].User, "SELECT * FROM `users` WHERE `id` = ?", comments[i].UserID)
+			err := db.Get(&comments[i].User, "SELECT id AS user_id, account_name, passhash, authority, del_flg, created_at AS user_created_at FROM `users` WHERE `id` = ?", comments[i].UserID)
 			if err != nil {
 				return nil, err
 			}
@@ -222,10 +221,11 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 
 		p.Comments = comments
 
-		err = db.Get(&p.User, "SELECT * FROM `users` WHERE `id` = ?", p.UserID)
-		if err != nil {
-			return nil, err
-		}
+		// FIXME: ここ消しても大丈夫？
+		//err = db.Get(&p.User, "SELECT id AS user_id, account_name, passhash, authority, del_flg, created_at AS user_created_at FROM `users` WHERE `id` = ?", p.UserID)
+		//if err != nil {
+		//	return nil, err
+		//}
 
 		p.CSRFToken = csrfToken
 
@@ -393,176 +393,6 @@ func getLogout(w http.ResponseWriter, r *http.Request) {
 	session.Save(r, w)
 
 	http.Redirect(w, r, "/", http.StatusFound)
-}
-
-func getAccountName(w http.ResponseWriter, r *http.Request) {
-	accountName := chi.URLParam(r, "accountName")
-	user := User{}
-
-	err := db.Get(&user, "SELECT * FROM `users` WHERE `account_name` = ? AND `del_flg` = 0", accountName)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	if user.ID == 0 {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	results := []Post{}
-
-	//TODO: LIMITをつける
-	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `user_id` = ? ORDER BY `created_at` DESC", user.ID)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	posts, err := makePosts(results, getCSRFToken(r), false)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	commentCount := 0
-	err = db.Get(&commentCount, "SELECT COUNT(*) AS count FROM `comments` WHERE `user_id` = ?", user.ID)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	postIDs := []int{}
-	err = db.Select(&postIDs, "SELECT `id` FROM `posts` WHERE `user_id` = ?", user.ID)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-	postCount := len(postIDs)
-
-	commentedCount := 0
-	if postCount > 0 {
-		s := []string{}
-		for range postIDs {
-			s = append(s, "?")
-		}
-		placeholder := strings.Join(s, ", ")
-
-		// convert []int -> []interface{}
-		args := make([]interface{}, len(postIDs))
-		for i, v := range postIDs {
-			args[i] = v
-		}
-
-		err = db.Get(&commentedCount, "SELECT COUNT(*) AS count FROM `comments` WHERE `post_id` IN ("+placeholder+")", args...)
-		if err != nil {
-			log.Print(err)
-			return
-		}
-	}
-
-	me := getSessionUser(r)
-
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
-
-	template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("user.html"),
-		getTemplPath("posts.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, struct {
-		Posts          []Post
-		User           User
-		PostCount      int
-		CommentCount   int
-		CommentedCount int
-		Me             User
-	}{posts, user, postCount, commentCount, commentedCount, me})
-}
-
-func getPosts(w http.ResponseWriter, r *http.Request) {
-	m, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log.Print(err)
-		return
-	}
-	maxCreatedAt := m.Get("max_created_at")
-	if maxCreatedAt == "" {
-		return
-	}
-
-	t, err := time.Parse(ISO8601Format, maxCreatedAt)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	results := []Post{}
-	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `created_at` <= ? ORDER BY `created_at` DESC", t.Format(ISO8601Format))
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	posts, err := makePosts(results, getCSRFToken(r), false)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	if len(posts) == 0 {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	//fmap := template.FuncMap{
-	//	"imageURL": imageURL,
-	//}
-
-	templates["get_post"].Execute(w, posts)
-}
-
-func getPostsID(w http.ResponseWriter, r *http.Request) {
-	pidStr := chi.URLParam(r, "id")
-	pid, err := strconv.Atoi(pidStr)
-	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	results := []Post{}
-	err = db.Select(&results, "SELECT * FROM `posts` WHERE `id` = ?", pid)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	posts, err := makePosts(results, getCSRFToken(r), true)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	if len(posts) == 0 {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	p := posts[0]
-
-	me := getSessionUser(r)
-
-	//fmap := template.FuncMap{
-	//	"imageURL": imageURL,
-	//}
-
-	templates["get_post_id"].Execute(w, struct {
-		Post Post
-		Me   User
-	}{p, me})
 }
 
 func postIndex(w http.ResponseWriter, r *http.Request) {
@@ -741,7 +571,7 @@ func getAdminBanned(w http.ResponseWriter, r *http.Request) {
 	}
 
 	users := []User{}
-	err := db.Select(&users, "SELECT * FROM `users` WHERE `authority` = 0 AND `del_flg` = 0 ORDER BY `created_at` DESC")
+	err := db.Select(&users, "SELECT id AS user_id, account_name, passhash, authority, del_flg, created_at AS user_created_at FROM `users` WHERE `authority` = 0 AND `del_flg` = 0 ORDER BY `created_at` DESC")
 	if err != nil {
 		log.Print(err)
 		return

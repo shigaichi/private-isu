@@ -12,7 +12,17 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 	results := []Post{}
 
 	query := `
-SELECT p.id, user_id, body, mime, p.created_at
+SELECT p.id         AS post_id,
+       user_id      AS post_user_id,
+       body,
+       mime,
+       p.created_at AS post_created_at,
+       u.id         AS user_id,
+       u.account_name,
+       u.passhash,
+       u.authority,
+       u.del_flg,
+       u.created_at AS user_created_at
 FROM posts p
          STRAIGHT_JOIN users u ON u.id = p.user_id
 WHERE u.del_flg = 0
@@ -30,10 +40,6 @@ LIMIT 20;
 		log.Print(err)
 		return
 	}
-
-	//fmap := template.FuncMap{
-	//	"imageURL": imageURL,
-	//}
 
 	templates["get_index"].Execute(w, struct {
 		Posts     []Post
