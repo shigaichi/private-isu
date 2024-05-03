@@ -29,13 +29,15 @@ WHERE u.del_flg = 0
 ORDER BY p.created_at DESC
 LIMIT 20;
 `
+	token := getCSRFToken(r)
+	log.Println("token: " + token)
 	err := db.Select(&results, query)
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
-	posts, err := makePosts(results, getCSRFToken(r), false)
+	posts, err := makePosts(results, token, false)
 	if err != nil {
 		log.Print(err)
 		return
@@ -46,5 +48,5 @@ LIMIT 20;
 		Me        User
 		CSRFToken string
 		Flash     string
-	}{posts, me, getCSRFToken(r), getFlash(w, r, "notice")})
+	}{posts, me, token, getFlash(w, r, "notice")})
 }
