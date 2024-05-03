@@ -98,7 +98,7 @@ LIMIT 20
 		"imageURL": imageURL,
 	}
 
-	template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+	err = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
 		getTemplPath("layout.html"),
 		getTemplPath("user.html"),
 		getTemplPath("posts.html"),
@@ -111,4 +111,7 @@ LIMIT 20
 		CommentedCount int
 		Me             User
 	}{posts, user, postCount, commentCount, commentedCount, me})
+	if err != nil {
+		log.Println(err)
+	}
 }
