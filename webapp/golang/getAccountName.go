@@ -4,7 +4,6 @@ import (
 	"html/template"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -74,11 +73,11 @@ LIMIT 20
 
 	commentedCount := 0
 	if postCount > 0 {
-		s := []string{}
-		for range postIDs {
-			s = append(s, "?")
-		}
-		placeholder := strings.Join(s, ", ")
+		//s := []string{}
+		//for range postIDs {
+		//	s = append(s, "?")
+		//}
+		//placeholder := strings.Join(s, ", ")
 
 		// convert []int -> []interface{}
 		args := make([]interface{}, len(postIDs))
@@ -86,7 +85,13 @@ LIMIT 20
 			args[i] = v
 		}
 
-		err = db.Get(&commentedCount, "SELECT COUNT(*) AS COUNT FROM `comments` WHERE `post_id` IN ("+placeholder+")", args...)
+		sumQuery := `
+		SELECT SUM(comment_count) AS total_comments
+		FROM posts
+		WHERE user_id = ?;
+`
+
+		err = db.Get(&commentedCount, sumQuery, user.ID)
 		if err != nil {
 			log.Print(err)
 			return
