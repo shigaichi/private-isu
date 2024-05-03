@@ -32,6 +32,7 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 		   body,
 		   mime,
 		   p.created_at AS post_created_at,
+           comment_count,
 # 		   u.id         AS user_id,
 		   u.account_name,
 		   u.passhash,

@@ -200,10 +200,11 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 
 	for _, p := range results {
 		// 各postのコメントを取得
-		err := db.Get(&p.CommentCount, "SELECT COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?", p.ID)
-		if err != nil {
-			return nil, err
-		}
+		// FIXME; 消しても大丈夫？
+		//err := db.Get(&p.CommentCount, "SELECT COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?", p.ID)
+		//if err != nil {
+		//	return nil, err
+		//}
 
 		query := `
 		SELECT comments.id,
@@ -221,12 +222,11 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 			query += " LIMIT 3"
 		}
 		var comments []Comment
-		err = db.Select(&comments, query, p.ID)
+		err := db.Select(&comments, query, p.ID)
 		if err != nil {
 			return nil, err
 		}
 
-		// FIXME: ここJOINする 画面で名前しか使っていないことを確認
 		//for i := 0; i < len(comments); i++ {
 		//	err := db.Get(&comments[i].AccountName, "SELECT id AS user_id, account_name, passhash, authority, del_flg, created_at AS user_created_at FROM `users` WHERE `id` = ?", comments[i].UserID)
 		//	if err != nil {
