@@ -31,7 +31,6 @@ ORDER BY p.created_at DESC
 LIMIT 20;
 `
 	token := getCSRFToken(r)
-	log.Println("token: " + token)
 	err := db.Select(&results, query)
 	if err != nil {
 		log.Print(err)

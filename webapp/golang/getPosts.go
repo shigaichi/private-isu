@@ -56,6 +56,7 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// FIXME: resultsを見れば良さそう
 	if len(posts) == 0 {
 		w.WriteHeader(http.StatusNotFound)
 		return
