@@ -50,7 +50,6 @@ type User struct {
 type Post struct {
 	ID           int       `db:"post_id"`
 	UserID       int       `db:"post_user_id"`
-	Imgdata      []byte    `db:"imgdata"`
 	Body         string    `db:"body"`
 	Mime         string    `db:"mime"`
 	CreatedAt    time.Time `db:"post_created_at"`
@@ -92,6 +91,13 @@ func dbInitialize() {
 	sqls := []string{
 		"DELETE FROM users WHERE id > 1000;DELETE FROM posts WHERE id > 10000;DELETE FROM comments WHERE id > 100000;UPDATE users SET del_flg = 0;UPDATE users SET del_flg = 1 WHERE id % 50 = 0",
 	}
+
+	sqls = append(sqls, `
+UPDATE posts p
+SET p.comment_count = (SELECT COUNT(c.id)
+                       FROM comments c
+                       WHERE c.post_id = p.id);
+`)
 
 	for _, sql := range sqls {
 		db.Exec(sql)
@@ -200,7 +206,6 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 
 	for _, p := range results {
 		// 各postのコメントを取得
-		// FIXME; 消しても大丈夫？
 		//err := db.Get(&p.CommentCount, "SELECT COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?", p.ID)
 		//if err != nil {
 		//	return nil, err
@@ -483,7 +488,7 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//TODO: mimeもいらない
-	query := "INSERT INTO `posts` (`user_id`, `mime`, `imgdata`, `body`) VALUES (?,?,'',?)"
+	query := "INSERT INTO `posts` (`user_id`, `mime`, `body`) VALUES (?,?,?)"
 	result, err := db.Exec(
 		query,
 		me.ID,
