@@ -594,8 +594,13 @@ func postComment(w http.ResponseWriter, r *http.Request) {
 	cacheKey := fmt.Sprintf("post-%d", postID)
 	err = memcacheClient.Delete(cacheKey)
 	if err != nil {
-		log.Printf("Failed to delete cache for key %s: %v", cacheKey, err)
-		return
+		if err != memcache.ErrCacheMiss {
+			// 本当のエラーの場合のみログに記録する
+			log.Printf("Failed to delete cache for key %s: %v", cacheKey, err)
+		} else {
+			// キャッシュミスの場合、必要に応じて処理をする（例えば何もしない、またはデバッグログを出すなど）
+			//log.Printf("Cache miss for key %s, nothing to delete.", cacheKey)
+		}
 	}
 
 	http.Redirect(w, r, fmt.Sprintf("/posts/%d", postID), http.StatusFound)
