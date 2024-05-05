@@ -27,9 +27,10 @@ import (
 )
 
 var (
-	db        *sqlx.DB
-	store     *gsm.MemcacheStore
-	templates = make(map[string]*template.Template)
+	db             *sqlx.DB
+	store          *gsm.MemcacheStore
+	templates      = make(map[string]*template.Template)
+	memcacheClient *memcache.Client
 )
 
 const (
@@ -81,7 +82,7 @@ func init() {
 	if memdAddr == "" {
 		memdAddr = "localhost:11211"
 	}
-	memcacheClient := memcache.New(memdAddr)
+	memcacheClient = memcache.New(memdAddr)
 	store = gsm.NewMemcacheStore(memcacheClient, "iscogram_", []byte("sendagaya"))
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 }
@@ -587,6 +588,13 @@ func postComment(w http.ResponseWriter, r *http.Request) {
 	_, err = db.Exec(query, postID, me.ID, r.FormValue("comment"))
 	if err != nil {
 		log.Print(err)
+		return
+	}
+
+	cacheKey := fmt.Sprintf("post-%d", postID)
+	err = memcacheClient.Delete(cacheKey)
+	if err != nil {
+		log.Printf("Failed to delete cache for key %s: %v", cacheKey, err)
 		return
 	}
 

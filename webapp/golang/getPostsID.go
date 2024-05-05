@@ -1,9 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
+	"time"
+
+	"github.com/bradfitz/gomemcache/memcache"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -62,8 +67,45 @@ LIMIT 20;
 	//	"imageURL": imageURL,
 	//}
 
-	templates["get_post_id"].Execute(w, struct {
+	var cacheKey string
+	if me.ID == 0 {
+		cacheKey = fmt.Sprintf("post-%d", p.ID)
+		cachedContent, found := memcacheClient.Get(cacheKey)
+		if found != nil {
+			w.Write(cachedContent.Value)
+			return
+		}
+	}
+
+	// キャッシュになければテンプレートをレンダリング
+	var tpl bytes.Buffer
+	if err := templates["get_post_id"].Execute(&tpl, struct {
 		Post Post
 		Me   User
-	}{p, me})
+	}{p, me}); err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	htmlContent := tpl.Bytes()
+	if me.ID == 0 {
+		// HTMLコンテンツをキャッシュに保存
+		item := &memcache.Item{
+			Key:        cacheKey,
+			Value:      htmlContent,
+			Expiration: int32(30 * time.Minute / time.Second),
+		}
+		err := memcacheClient.Set(item)
+		if err != nil {
+			// エラー処理（必要に応じて）
+			log.Printf("Failed to set cache: %v", err)
+		}
+	}
+
+	w.Write(htmlContent)
+
+	//templates["get_post_id"].Execute(w, struct {
+	//	Post Post
+	//	Me   User
+	//}{p, me})
 }
