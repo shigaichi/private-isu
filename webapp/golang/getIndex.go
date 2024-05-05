@@ -2,10 +2,11 @@ package main
 
 import (
 	"bytes"
-	"github.com/bradfitz/gomemcache/memcache"
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/bradfitz/gomemcache/memcache"
 )
 
 var indexCounts int
@@ -18,6 +19,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		// ログインしていない場合はキャッシュを試みる
 		item, err := memcacheClient.Get(cacheKey)
 		indexCounts++
+		// 2024/05/06 02:47:29 getIndex.go:21: cache hit in getindex count: 7269(10271)
 		log.Printf("cache hit in getindex count: %d\n", indexCounts)
 		if err == nil {
 			w.Write(item.Value)
