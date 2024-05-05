@@ -71,6 +71,7 @@ LIMIT 20;
 	if me.ID == 0 {
 		cacheKey = fmt.Sprintf("post-%d", p.ID)
 		cachedContent, found := memcacheClient.Get(cacheKey)
+		log.Println("cache hit!!!")
 		if found == nil {
 			w.Write(cachedContent.Value)
 			return
