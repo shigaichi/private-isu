@@ -729,6 +729,8 @@ func main() {
 		getTemplPath("post.html"),
 	))
 
+	r.Use(middleware.Recoverer)
+
 	r.Mount("/debug", middleware.Profiler())
 
 	r.Get("/initialize", getInitialize)
