@@ -1,12 +1,29 @@
 package main
 
 import (
+	"bytes"
+	"github.com/bradfitz/gomemcache/memcache"
 	"log"
 	"net/http"
+	"time"
 )
+
+var indexCounts int
 
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
+
+	const cacheKey = "index-page"
+	if me.ID == 0 {
+		// ログインしていない場合はキャッシュを試みる
+		item, err := memcacheClient.Get(cacheKey)
+		indexCounts++
+		log.Printf("cache hit in getindex count: %d\n", indexCounts)
+		if err == nil {
+			w.Write(item.Value)
+			return
+		}
+	}
 
 	// 投稿一覧画面ではAccountNameしか使われていない
 	results := []Post{}
@@ -43,10 +60,40 @@ LIMIT 20;
 		return
 	}
 
-	templates["get_index"].Execute(w, struct {
+	// キャッシュになければテンプレートをレンダリング
+	var tpl bytes.Buffer
+	if err := templates["get_index"].Execute(&tpl, struct {
 		Posts     []Post
 		Me        User
 		CSRFToken string
 		Flash     string
-	}{posts, me, token, getFlash(w, r, "notice")})
+	}{
+		Posts:     posts,
+		Me:        me,
+		CSRFToken: token,
+		Flash:     getFlash(w, r, "notice"),
+	}); err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	htmlContent := tpl.Bytes()
+	if me.ID == 0 {
+		// HTMLコンテンツをキャッシュに保存
+		item := &memcache.Item{
+			Key:        cacheKey,
+			Value:      htmlContent,
+			Expiration: int32(30 * time.Minute / time.Second),
+		}
+		memcacheClient.Set(item)
+	}
+
+	w.Write(htmlContent)
+
+	//templates["get_index"].Execute(w, struct {
+	//	Posts     []Post
+	//	Me        User
+	//	CSRFToken string
+	//	Flash     string
+	//}{posts, me, token, getFlash(w, r, "notice")})
 }

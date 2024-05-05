@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
@@ -188,6 +189,7 @@ func getSessionUser(r *http.Request) User {
 	return u
 }
 
+// 何もなければおそらく空文字 ログインしていなければ空ならずから文字（多分）
 func getFlash(w http.ResponseWriter, r *http.Request, key string) string {
 	session := getSession(r)
 	value, ok := session.Values[key]
@@ -591,17 +593,14 @@ func postComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cacheKey := fmt.Sprintf("post-%d", postID)
-	err = memcacheClient.Delete(cacheKey)
-	if err != nil {
-		if err != memcache.ErrCacheMiss {
-			// 本当のエラーの場合のみログに記録する
-			log.Printf("Failed to delete cache for key %s: %v", cacheKey, err)
-		} else {
-			// キャッシュミスの場合、必要に応じて処理をする（例えば何もしない、またはデバッグログを出すなど）
-			//log.Printf("Cache miss for key %s, nothing to delete.", cacheKey)
-		}
+	// 削除したいキャッシュのキー
+	cacheKeys := []string{
+		fmt.Sprintf("post-%d", postID), // 例えば postID は適宜設定
+		"index-page",
 	}
+
+	// キャッシュ削除の実行
+	deleteCacheKeys(cacheKeys)
 
 	http.Redirect(w, r, fmt.Sprintf("/posts/%d", postID), http.StatusFound)
 }
@@ -736,6 +735,8 @@ func main() {
 
 	r.Use(middleware.Recoverer)
 
+	postsIdCounts = 0
+	indexCounts = 0
 	r.Mount("/debug", middleware.Profiler())
 
 	r.Get("/initialize", getInitialize)
@@ -764,4 +765,25 @@ func loadTemplate(tmplName string, filename ...string) {
 	tmpl := template.Must(template.ParseFiles(filename...))
 
 	templates[tmplName] = tmpl
+}
+
+func deleteCacheKeys(cacheKeys []string) {
+	var wg sync.WaitGroup
+	for _, key := range cacheKeys {
+		wg.Add(1)
+		go func(key string) {
+			defer wg.Done()
+			err := memcacheClient.Delete(key)
+			if err != nil {
+				if err != memcache.ErrCacheMiss {
+					// 本当のエラーの場合のみログに記録する
+					log.Printf("Failed to delete cache for key %s: %v", key, err)
+				} else {
+					// キャッシュミスの場合、必要に応じて処理をする（例えば何もしない、またはデバッグログを出すなど）
+					// log.Printf("Cache miss for key %s, nothing to delete.", key)
+				}
+			}
+		}(key)
+	}
+	wg.Wait() // すべてのゴルーチンが終了するまで待つ
 }

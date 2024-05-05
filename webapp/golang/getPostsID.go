@@ -13,6 +13,8 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+var postsIdCounts int
+
 func getPostsID(w http.ResponseWriter, r *http.Request) {
 	pidStr := chi.URLParam(r, "id")
 	pid, err := strconv.Atoi(pidStr)
@@ -27,8 +29,9 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 	if me.ID == 0 {
 		cacheKey = fmt.Sprintf("post-%d", pid)
 		cachedContent, found := memcacheClient.Get(cacheKey)
-		// 2000/7502以上HITしているので意味はありそう（正確な数はタイムアウトする）
-		log.Println("cache hit!!!")
+		// 2000/7502以上HITしているので意味はありそう
+		postsIdCounts++
+		log.Printf("cache hit in get postsId count: %d\n", postsIdCounts)
 		if found == nil {
 			w.Write(cachedContent.Value)
 			return
