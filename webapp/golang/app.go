@@ -517,6 +517,8 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	deleteCacheKeys([]string{"index-page"})
+
 	http.Redirect(w, r, "/posts/"+strconv.FormatInt(pid, 10), http.StatusFound)
 }
 
@@ -730,6 +732,13 @@ func main() {
 	templates["get_post_id"] = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
 		getTemplPath("layout.html"),
 		getTemplPath("post_id.html"),
+		getTemplPath("post.html"),
+	))
+
+	templates["get_account_name"] = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+		getTemplPath("layout.html"),
+		getTemplPath("user.html"),
+		getTemplPath("posts.html"),
 		getTemplPath("post.html"),
 	))
 

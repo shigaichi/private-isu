@@ -1,11 +1,9 @@
 package main
 
 import (
-	"html/template"
+	"github.com/go-chi/chi/v5"
 	"log"
 	"net/http"
-
-	"github.com/go-chi/chi/v5"
 )
 
 func getAccountName(w http.ResponseWriter, r *http.Request) {
@@ -100,16 +98,7 @@ LIMIT 20
 
 	me := getSessionUser(r)
 
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
-
-	err = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("user.html"),
-		getTemplPath("posts.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, struct {
+	err = templates["get_account_name"].Execute(w, struct {
 		Posts          []Post
 		User           User
 		PostCount      int

@@ -29,7 +29,7 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 	if me.ID == 0 {
 		cacheKey = fmt.Sprintf("post-%d", pid)
 		cachedContent, found := memcacheClient.Get(cacheKey)
-		// 2000/7502以上HITしているので意味はありそう
+		// 2024/05/06 02:47:29 getPostsID.go:34: cache hit in get postsId count: 6122(6909)
 		postsIdCounts++
 		log.Printf("cache hit in get postsId count: %d\n", postsIdCounts)
 		if found == nil {
