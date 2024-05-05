@@ -21,6 +21,20 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	me := getSessionUser(r)
+
+	var cacheKey string
+	if me.ID == 0 {
+		cacheKey = fmt.Sprintf("post-%d", pid)
+		cachedContent, found := memcacheClient.Get(cacheKey)
+		// 2000/7502以上HITしているので意味はありそう（正確な数はタイムアウトする）
+		log.Println("cache hit!!!")
+		if found == nil {
+			w.Write(cachedContent.Value)
+			return
+		}
+	}
+
 	results := []Post{}
 	query := `
 SELECT p.id         AS post_id,
@@ -61,22 +75,9 @@ LIMIT 20;
 
 	p := posts[0]
 
-	me := getSessionUser(r)
-
 	//fmap := template.FuncMap{
 	//	"imageURL": imageURL,
 	//}
-
-	var cacheKey string
-	if me.ID == 0 {
-		cacheKey = fmt.Sprintf("post-%d", p.ID)
-		cachedContent, found := memcacheClient.Get(cacheKey)
-		log.Println("cache hit!!!")
-		if found == nil {
-			w.Write(cachedContent.Value)
-			return
-		}
-	}
 
 	// キャッシュになければテンプレートをレンダリング
 	var tpl bytes.Buffer
