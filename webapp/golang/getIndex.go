@@ -14,6 +14,7 @@ var indexCounts int
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
+	// FIXME: ログインしていてもキャッシュを使う
 	const cacheKey = "index-page"
 	if me.ID == 0 {
 		// ログインしていない場合はキャッシュを試みる

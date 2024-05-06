@@ -16,3 +16,13 @@ fmt: install
 install:
 	@go install golang.org/x/tools/cmd/goimports@v0.14.0
 	@go install honnef.co/go/tools/cmd/staticcheck@v0.4.6
+
+.PHONY: deploy
+deploy:
+	git pull
+	go build -o app
+	sudo systemctl restart isu-go
+	systemctl status isu-go
+
+clean-image:
+	bash clean_image.sh

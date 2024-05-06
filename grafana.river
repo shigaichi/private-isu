@@ -1,0 +1,205 @@
+// このモジュールが取る引数を宣言できる。
+//argument "write_to" {
+//    comment = "http://ec2-43-207-235-97.ap-northeast-1.compute.amazonaws.com:9090"
+// }
+
+// Node Exporterの設定をする
+prometheus.exporter.unix "default" {
+    include_exporter_metrics = false
+    // dash boardのために追加
+    enable_collectors = ["systemd", "processes"]
+    // ISUCONではそこまで細かいメトリクスは要らないので適当に
+//    set_collectors = [
+//        "cpu", "diskstats", "filefd", "filesystem", "loadavg", "meminfo", "netclass", "netdev", "vmstat", "sockstat",
+//    ]
+    filesystem {
+        fs_types_exclude =  "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|tmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$"
+    }
+    netclass {
+        ignored_devices = "^(veth.*|cali.*|[a-f0-9]{15})$"
+    }
+    netdev {
+        device_exclude = "^(veth.*|cali.*|[a-f0-9]{15})$"
+    }
+}
+
+// 設定したNode Exporterからメトリクスをスクレイプする設定
+prometheus.scrape "node" {
+    targets = prometheus.exporter.unix.default.targets
+    //job_name = "node"
+    // このモジュールの引数で渡された書き込み先に渡す
+    forward_to = [prometheus.remote_write.hq.receiver]
+    scrape_interval = "15s"
+}
+
+// Grafana CloudのAPI Keyを書いておくファイル
+//local.file "api_key" {
+//    filename = "/etc/grafana-agent-api-key"
+//    is_secret = true
+//}
+
+prometheus.exporter.process "process" {
+    matcher {
+        name = "{{.Comm}}"
+        cmdline = ["postgres"]
+    }
+    matcher {
+        name = "{{.Comm}}"
+        cmdline = ["nginx"]
+    }
+    matcher {
+        name = "{{.Comm}}"
+        cmdline = ["java"]
+    }
+    matcher {
+        name = "{{.Username}} processes"
+        cmdline = [".+"]
+    }
+}
+
+prometheus.scrape "process" {
+  targets    = prometheus.exporter.process.process.targets
+  forward_to = [prometheus.remote_write.hq.receiver]
+}
+
+prometheus.remote_write "hq" {
+  // Send metrics to a locally running Mimir.
+  endpoint {
+    url = "http://ec2-57-181-35-192.ap-northeast-1.compute.amazonaws.com:9090/api/v1/write"
+  }
+  //wal {
+//    truncate_frequency = "5m"
+//  }
+}
+
+pyroscope.write "pyroscope_write" {
+  endpoint {
+    url = "http://ec2-57-181-35-192.ap-northeast-1.compute.amazonaws.com:4040"
+  }
+}
+
+pyroscope.scrape "local" {
+  targets = [
+    {"__address__" = "localhost:8080", "service_name"="isucon"},
+  ]
+
+  forward_to = [pyroscope.write.pyroscope_write.receiver]
+}
+
+// ここからloki
+loki.write "loki_write" {
+  endpoint {
+      url = "http://ec2-57-181-35-192.ap-northeast-1.compute.amazonaws.com:3100/loki/api/v1/push"
+  }
+}
+
+local.file_match "nginx" {
+    // .* でないほうが良いかも 
+  path_targets = [{"__path__" = "/var/log/nginx/access.log.*"}]
+}
+
+loki.source.file "files" {
+  targets    = local.file_match.nginx.targets
+  forward_to = [loki.process.nginx.receiver]
+}
+
+loki.process "nginx" {
+    // 後段の処理を指定
+    forward_to = [loki.relabel.nginx.receiver]
+
+    stage.static_labels {
+        values = {
+            app = "nginx",
+            type = "access",
+        }
+    }
+    stage.label_drop {
+        values = ["filename"]
+    }
+    // LTSV形式のログ行をパースする。正規表現でバックスラッシュを使いたい時は2つ重ねる。
+    // 後から気付いたけどこれはjsonにしておけばもっと楽にパースできたので、
+    // 皆さんはこれをパクらずにnginxにjson形式でログを吐かせてください。
+    // alp で集計されるのはresponse_time
+    stage.json {
+        // いるのか？
+        expressions = {time= "", host = "", forwardedfor = "", req= "", status = "", method = "", uri = "", body_bytes = "", referer = "", ua = "", request_time = "", cache = "", runtime = "", response_time = "", request_id = "" , vhost = "" }
+    }
+    // ログ行からアクセス日時をとりだしてログの記録日時とする
+    stage.timestamp {
+        source = "time"
+        format = "02/Jan/2006:15:04:05 -0700"
+    }
+    // 正規化したいパラメータを抽出する
+    stage.labels {
+        values = {
+            status_normalized = "status",
+            uri_normalized = "uri",
+        }
+    }
+}
+
+loki.relabel "nginx" {
+    forward_to = [loki.write.loki_write.receiver]
+    // alpが 2XX や 5XX のように表示するのが分かりやすかったので同じ事をする
+    rule {
+        source_labels = ["status_normalized"]
+        regex = "^([0-9])[0-9]+$"
+        replacement = "${1}XX"
+        target_label = "status_normalized"
+    }
+
+    // クエリパラメータを消す
+    rule {
+        source_labels = ["uri_normalized"]
+        regex = "^(.*)\\?(.+)$"
+        replacement = "$1"
+        target_label = "uri_normalized"
+    }
+
+    // 以下の様なルールをエンドポイントの数だけ書く。マッチするラベルだけが置き換えられる。
+    // 本番ではAnsibleでテンプレートを書いておいて自動生成した
+    rule {
+        source_labels = ["uri_normalized"]
+        regex = "^/api/user/[a-zA-Z0-9]+$"
+        replacement = "/api/user/[a-zA-Z0-9]+"
+        target_label = "uri_normalized"
+    }
+
+    // 今回のisuconようにお試し追加。うまく行けば今後増やす
+    rule {
+        source_labels = ["uri_normalized"]
+        regex = "^/posts/[0-9]+$"
+        replacement = "/posts/[0-9]+"
+        target_label = "uri_normalized"
+    }
+}
+
+// Grafana Cloudの書き込み先の設定
+//prometheus.remote_write "grafanacloud" {
+//    endpoint {
+//        url = "REMOTE WRITE URL"
+//        basic_auth {
+//            username = "BASIC AUTH USER"
+//            password = local.file.api_key.content
+//        }
+//    }
+//}
+
+// ラベルを書き換える
+//prometheus.relabel "replace_instance" {
+//    forward_to = [prometheus.remote_write.grafanacloud.receiver]
+//    rule {
+//        action = "replace"
+//        target_label = "instance"
+//        // Ansibleでここを各ホストごとの識別名に置き換えていた
+//        replacement = "{{ inventory_hostname }}"
+//    }
+//}
+
+//module.file "nodeexporter" {
+//    // 先ほどのモジュールまでのファイルパス
+//    filename = "/etc/grafana-agent/rivers/nodeexporter.river"
+//    arguments {
+//        write_to = prometheus.relabel.replace_instance.receiver
+//    }
+//}
