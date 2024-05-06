@@ -1,10 +1,11 @@
-name: private-isu
+# name: private-isu
 services:
   nginx:
-    image: nginx:1.24
+    image: nginx:1.24.0-alpine3.17-slim
     volumes:
       - ./etc/nginx/conf.d:/etc/nginx/conf.d
       - ./public:/public
+      - ./nginx-logs:/var/log/nginx
     ports:
       - "80:80"
     networks:
@@ -12,7 +13,7 @@ services:
 
   app:
     # Go実装の場合は golang/ PHP実装の場合は php/
-    build: ruby/
+    build: golang/
     environment:
       ISUCONP_DB_HOST: mysql
       ISUCONP_DB_PORT: 3306
@@ -41,6 +42,7 @@ services:
       - mysql:/var/lib/mysql
       - ./etc/my.cnf:/etc/my.cnf
       - ./sql:/docker-entrypoint-initdb.d
+      - ./mysql-logs:/var/log/mysql
     ports:
       - "3306:3306"
     networks:
@@ -52,7 +54,19 @@ services:
           memory: 1g
 
   memcached:
-    image: memcached:1.6
+    image: memcached:1.6.22-alpine3.19
+    networks:
+        - my_network
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:5.2.1
+    environment:
+      - PMA_ARBITRARY=1
+      - PMA_HOST=mysql
+      - PMA_USER=root
+      - PMA_PASSWORD=root
+    ports:
+      - 8081:80
     networks:
         - my_network
 

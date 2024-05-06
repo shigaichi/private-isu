@@ -1,0 +1,62 @@
+package main
+
+import (
+	"database/sql"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"strings"
+
+	_ "github.com/go-sql-driver/mysql"
+)
+
+func main() {
+	// データベース接続設定
+	dsn := "isuconp:isuconp@tcp(localhost:3306)/isuconp"
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	// データ取得
+	rows, err := db.Query("SELECT id, mime, imgdata FROM posts")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int
+		var mime string
+		var imgdata []byte
+		if err := rows.Scan(&id, &mime, &imgdata); err != nil {
+			log.Fatal(err)
+		}
+
+		// MIMEタイプからファイル拡張子を決定
+		var extension string
+		if strings.Contains(mime, "jpeg") {
+			extension = "jpg"
+		} else if strings.Contains(mime, "png") {
+			extension = "png"
+		} else if strings.Contains(mime, "gif") {
+			extension = "gif"
+		} else {
+			log.Printf("Unsupported MIME type: %s", mime)
+			continue
+		}
+
+		// ファイル名の設定
+		filename := fmt.Sprintf("/home/isucon/image/storage/%d.%s", id, extension)
+
+		// ファイルにデータを書き出す
+		if err := ioutil.WriteFile(filename, imgdata, 0644); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Fatal(err)
+	}
+}

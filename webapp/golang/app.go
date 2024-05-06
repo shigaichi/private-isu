@@ -2,31 +2,36 @@ package main
 
 import (
 	crand "crypto/rand"
+	"crypto/sha512"
+	"encoding/hex"
 	"fmt"
-	"html/template"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
-	"os/exec"
 	"path"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"text/template"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
 	gsm "github.com/bradleypeabody/gorilla-sessions-memcache"
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
 )
 
 var (
-	db    *sqlx.DB
-	store *gsm.MemcacheStore
+	db             *sqlx.DB
+	store          *gsm.MemcacheStore
+	templates      = make(map[string]*template.Template)
+	memcacheClient *memcache.Client
 )
 
 const (
@@ -36,25 +41,31 @@ const (
 )
 
 type User struct {
-	ID          int       `db:"id"`
+	ID          int       `db:"user_id"`
 	AccountName string    `db:"account_name"`
 	Passhash    string    `db:"passhash"`
 	Authority   int       `db:"authority"`
 	DelFlg      int       `db:"del_flg"`
-	CreatedAt   time.Time `db:"created_at"`
+	CreatedAt   time.Time `db:"user_created_at"`
 }
 
 type Post struct {
-	ID           int       `db:"id"`
-	UserID       int       `db:"user_id"`
-	Imgdata      []byte    `db:"imgdata"`
+	ID           int       `db:"post_id"`
+	UserID       int       `db:"post_user_id"`
 	Body         string    `db:"body"`
 	Mime         string    `db:"mime"`
-	CreatedAt    time.Time `db:"created_at"`
-	CommentCount int
+	CreatedAt    time.Time `db:"post_created_at"`
+	CommentCount int       `db:"comment_count"`
 	Comments     []Comment
 	User         User
 	CSRFToken    string
+	// Userフィールドを展開して直接Post構造体に含める
+	//UserID         int       `db:"user_id"`
+	UserAccountName string    `db:"account_name"`
+	UserPasshash    string    `db:"passhash"`
+	UserAuthority   int       `db:"authority"`
+	UserDelFlg      int       `db:"del_flg"`
+	UserCreatedAt   time.Time `db:"user_created_at"`
 }
 
 type Comment struct {
@@ -63,7 +74,8 @@ type Comment struct {
 	UserID    int       `db:"user_id"`
 	Comment   string    `db:"comment"`
 	CreatedAt time.Time `db:"created_at"`
-	User      User
+	//User      User
+	AccountName string `db:"comment_account_name"`
 }
 
 func init() {
@@ -71,19 +83,23 @@ func init() {
 	if memdAddr == "" {
 		memdAddr = "localhost:11211"
 	}
-	memcacheClient := memcache.New(memdAddr)
+	memcacheClient = memcache.New(memdAddr)
 	store = gsm.NewMemcacheStore(memcacheClient, "iscogram_", []byte("sendagaya"))
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 }
 
 func dbInitialize() {
+	// ここ一行にする
 	sqls := []string{
-		"DELETE FROM users WHERE id > 1000",
-		"DELETE FROM posts WHERE id > 10000",
-		"DELETE FROM comments WHERE id > 100000",
-		"UPDATE users SET del_flg = 0",
-		"UPDATE users SET del_flg = 1 WHERE id % 50 = 0",
+		"DELETE FROM users WHERE id > 1000;DELETE FROM posts WHERE id > 10000;DELETE FROM comments WHERE id > 100000;UPDATE users SET del_flg = 0;UPDATE users SET del_flg = 1 WHERE id % 50 = 0",
 	}
+
+	sqls = append(sqls, `
+UPDATE posts p
+SET p.comment_count = (SELECT COUNT(c.id)
+                       FROM comments c
+                       WHERE c.post_id = p.id);
+`)
 
 	for _, sql := range sqls {
 		db.Exec(sql)
@@ -92,7 +108,9 @@ func dbInitialize() {
 
 func tryLogin(accountName, password string) *User {
 	u := User{}
-	err := db.Get(&u, "SELECT * FROM users WHERE account_name = ? AND del_flg = 0", accountName)
+	// TODO: del_flgにはインデックスは不要だと思う。物理削除する？
+	// TODO: postAdminBannedで削除されているが、これは呼ばれていない？
+	err := db.Get(&u, "SELECT id AS user_id,account_name,passhash FROM users WHERE account_name = ? AND del_flg = 0", accountName)
 	if err != nil {
 		return nil
 	}
@@ -112,19 +130,32 @@ func validateUser(accountName, password string) bool {
 // 今回のGo実装では言語側のエスケープの仕組みが使えないのでOSコマンドインジェクション対策できない
 // 取り急ぎPHPのescapeshellarg関数を参考に自前で実装
 // cf: http://jp2.php.net/manual/ja/function.escapeshellarg.php
-func escapeshellarg(arg string) string {
-	return "'" + strings.Replace(arg, "'", "'\\''", -1) + "'"
-}
+//func escapeshellarg(arg string) string {
+//	return "'" + strings.Replace(arg, "'", "'\\''", -1) + "'"
+//}
+
+//func digest(src string) string {
+//	// opensslのバージョンによっては (stdin)= というのがつくので取る
+//	out, err := exec.Command("/bin/bash", "-c", `printf "%s" `+escapeshellarg(src)+` | openssl dgst -sha512 | sed 's/^.*= //'`).Output()
+//	if err != nil {
+//		log.Print(err)
+//		return ""
+//	}
+//
+//	return strings.TrimSuffix(string(out), "\n")
+//}
 
 func digest(src string) string {
-	// opensslのバージョンによっては (stdin)= というのがつくので取る
-	out, err := exec.Command("/bin/bash", "-c", `printf "%s" `+escapeshellarg(src)+` | openssl dgst -sha512 | sed 's/^.*= //'`).Output()
-	if err != nil {
+	// SHA-512ハッシュオブジェクトを生成
+	hasher := sha512.New()
+	// データをハッシュオブジェクトに書き込み
+	if _, err := hasher.Write([]byte(src)); err != nil {
 		log.Print(err)
 		return ""
 	}
-
-	return strings.TrimSuffix(string(out), "\n")
+	// ハッシュを計算し、その結果を16進数でエンコード
+	hashed := hex.EncodeToString(hasher.Sum(nil))
+	return hashed
 }
 
 func calculateSalt(accountName string) string {
@@ -150,7 +181,7 @@ func getSessionUser(r *http.Request) User {
 
 	u := User{}
 
-	err := db.Get(&u, "SELECT * FROM `users` WHERE `id` = ?", uid)
+	err := db.Get(&u, "SELECT id AS user_id, account_name, passhash, authority, del_flg, created_at AS user_created_at FROM `users` WHERE `id` = ?", uid)
 	if err != nil {
 		return User{}
 	}
@@ -158,6 +189,7 @@ func getSessionUser(r *http.Request) User {
 	return u
 }
 
+// 何もなければおそらく空文字 ログインしていなければ空ならずから文字（多分）
 func getFlash(w http.ResponseWriter, r *http.Request, key string) string {
 	session := getSession(r)
 	value, ok := session.Values[key]
@@ -172,30 +204,43 @@ func getFlash(w http.ResponseWriter, r *http.Request, key string) string {
 }
 
 func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, error) {
+	// results
 	var posts []Post
 
 	for _, p := range results {
-		err := db.Get(&p.CommentCount, "SELECT COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?", p.ID)
-		if err != nil {
-			return nil, err
-		}
+		// 各postのコメントを取得
+		//err := db.Get(&p.CommentCount, "SELECT COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?", p.ID)
+		//if err != nil {
+		//	return nil, err
+		//}
 
-		query := "SELECT * FROM `comments` WHERE `post_id` = ? ORDER BY `created_at` DESC"
+		query := `
+		SELECT comments.id,
+			   post_id,
+			   user_id,
+			   comment,
+			   comments.created_at,
+			   u.account_name AS comment_account_name
+		FROM comments
+				 JOIN users u ON u.id = comments.user_id
+		WHERE post_id = ?
+		ORDER BY comments.created_at DESC
+`
 		if !allComments {
 			query += " LIMIT 3"
 		}
 		var comments []Comment
-		err = db.Select(&comments, query, p.ID)
+		err := db.Select(&comments, query, p.ID)
 		if err != nil {
 			return nil, err
 		}
 
-		for i := 0; i < len(comments); i++ {
-			err := db.Get(&comments[i].User, "SELECT * FROM `users` WHERE `id` = ?", comments[i].UserID)
-			if err != nil {
-				return nil, err
-			}
-		}
+		//for i := 0; i < len(comments); i++ {
+		//	err := db.Get(&comments[i].AccountName, "SELECT id AS user_id, account_name, passhash, authority, del_flg, created_at AS user_created_at FROM `users` WHERE `id` = ?", comments[i].UserID)
+		//	if err != nil {
+		//		return nil, err
+		//	}
+		//}
 
 		// reverse
 		for i, j := 0, len(comments)-1; i < j; i, j = i+1, j-1 {
@@ -204,18 +249,31 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 
 		p.Comments = comments
 
-		err = db.Get(&p.User, "SELECT * FROM `users` WHERE `id` = ?", p.UserID)
-		if err != nil {
-			return nil, err
-		}
+		//err = db.Get(&p.User, "SELECT id AS user_id, account_name, passhash, authority, del_flg, created_at AS user_created_at FROM `users` WHERE `id` = ?", p.UserID)
+		//if err != nil {
+		//	return nil, err
+		//}
 
 		p.CSRFToken = csrfToken
 
-		if p.User.DelFlg == 0 {
-			posts = append(posts, p)
-		}
-		if len(posts) >= postsPerPage {
-			break
+		//if p.User.DelFlg == 0 {
+		posts = append(posts, p)
+		//}
+		//if len(posts) >= postsPerPage {
+		//	// 参照
+		//	break
+		//}
+	}
+
+	// TODO: 詰め替えをするべきではない
+	for i := range posts {
+		posts[i].User = User{
+			ID:          posts[i].UserID,
+			AccountName: posts[i].UserAccountName,
+			Passhash:    posts[i].UserPasshash,
+			Authority:   posts[i].UserAuthority,
+			DelFlg:      posts[i].UserDelFlg,
+			CreatedAt:   posts[i].UserCreatedAt,
 		}
 	}
 
@@ -273,10 +331,7 @@ func getLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	template.Must(template.ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("login.html")),
-	).Execute(w, struct {
+	templates["get_login"].Execute(w, struct {
 		Me    User
 		Flash string
 	}{me, getFlash(w, r, "notice")})
@@ -312,10 +367,7 @@ func getRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	template.Must(template.ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("register.html")),
-	).Execute(w, struct {
+	templates["get_register"].Execute(w, struct {
 		Me    User
 		Flash string
 	}{User{}, getFlash(w, r, "notice")})
@@ -381,216 +433,6 @@ func getLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-func getIndex(w http.ResponseWriter, r *http.Request) {
-	me := getSessionUser(r)
-
-	results := []Post{}
-
-	err := db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` ORDER BY `created_at` DESC")
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	posts, err := makePosts(results, getCSRFToken(r), false)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
-
-	template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("index.html"),
-		getTemplPath("posts.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, struct {
-		Posts     []Post
-		Me        User
-		CSRFToken string
-		Flash     string
-	}{posts, me, getCSRFToken(r), getFlash(w, r, "notice")})
-}
-
-func getAccountName(w http.ResponseWriter, r *http.Request) {
-	accountName := chi.URLParam(r, "accountName")
-	user := User{}
-
-	err := db.Get(&user, "SELECT * FROM `users` WHERE `account_name` = ? AND `del_flg` = 0", accountName)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	if user.ID == 0 {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	results := []Post{}
-
-	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `user_id` = ? ORDER BY `created_at` DESC", user.ID)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	posts, err := makePosts(results, getCSRFToken(r), false)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	commentCount := 0
-	err = db.Get(&commentCount, "SELECT COUNT(*) AS count FROM `comments` WHERE `user_id` = ?", user.ID)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	postIDs := []int{}
-	err = db.Select(&postIDs, "SELECT `id` FROM `posts` WHERE `user_id` = ?", user.ID)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-	postCount := len(postIDs)
-
-	commentedCount := 0
-	if postCount > 0 {
-		s := []string{}
-		for range postIDs {
-			s = append(s, "?")
-		}
-		placeholder := strings.Join(s, ", ")
-
-		// convert []int -> []interface{}
-		args := make([]interface{}, len(postIDs))
-		for i, v := range postIDs {
-			args[i] = v
-		}
-
-		err = db.Get(&commentedCount, "SELECT COUNT(*) AS count FROM `comments` WHERE `post_id` IN ("+placeholder+")", args...)
-		if err != nil {
-			log.Print(err)
-			return
-		}
-	}
-
-	me := getSessionUser(r)
-
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
-
-	template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("user.html"),
-		getTemplPath("posts.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, struct {
-		Posts          []Post
-		User           User
-		PostCount      int
-		CommentCount   int
-		CommentedCount int
-		Me             User
-	}{posts, user, postCount, commentCount, commentedCount, me})
-}
-
-func getPosts(w http.ResponseWriter, r *http.Request) {
-	m, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log.Print(err)
-		return
-	}
-	maxCreatedAt := m.Get("max_created_at")
-	if maxCreatedAt == "" {
-		return
-	}
-
-	t, err := time.Parse(ISO8601Format, maxCreatedAt)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	results := []Post{}
-	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `created_at` <= ? ORDER BY `created_at` DESC", t.Format(ISO8601Format))
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	posts, err := makePosts(results, getCSRFToken(r), false)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	if len(posts) == 0 {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
-
-	template.Must(template.New("posts.html").Funcs(fmap).ParseFiles(
-		getTemplPath("posts.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, posts)
-}
-
-func getPostsID(w http.ResponseWriter, r *http.Request) {
-	pidStr := chi.URLParam(r, "id")
-	pid, err := strconv.Atoi(pidStr)
-	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	results := []Post{}
-	err = db.Select(&results, "SELECT * FROM `posts` WHERE `id` = ?", pid)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	posts, err := makePosts(results, getCSRFToken(r), true)
-	if err != nil {
-		log.Print(err)
-		return
-	}
-
-	if len(posts) == 0 {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	p := posts[0]
-
-	me := getSessionUser(r)
-
-	fmap := template.FuncMap{
-		"imageURL": imageURL,
-	}
-
-	template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
-		getTemplPath("layout.html"),
-		getTemplPath("post_id.html"),
-		getTemplPath("post.html"),
-	)).Execute(w, struct {
-		Post Post
-		Me   User
-	}{p, me})
-}
-
 func postIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 	if !isLogin(me) {
@@ -648,12 +490,13 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := "INSERT INTO `posts` (`user_id`, `mime`, `imgdata`, `body`) VALUES (?,?,?,?)"
+	//TODO: mimeもいらない
+	query := "INSERT INTO `posts` (`user_id`, `mime`, `body`) VALUES (?,?,?)"
 	result, err := db.Exec(
 		query,
 		me.ID,
 		mime,
-		filedata,
+		//filedata,
 		r.FormValue("body"),
 	)
 	if err != nil {
@@ -667,39 +510,64 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.Redirect(w, r, "/posts/"+strconv.FormatInt(pid, 10), http.StatusFound)
-}
-
-func getImage(w http.ResponseWriter, r *http.Request) {
-	pidStr := chi.URLParam(r, "id")
-	pid, err := strconv.Atoi(pidStr)
-	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	post := Post{}
-	err = db.Get(&post, "SELECT * FROM `posts` WHERE `id` = ?", pid)
-	if err != nil {
+	// ファイルを保存
+	filename := fmt.Sprintf("/home/isucon/image/storage/%d.%s", pid, determineExtension(mime))
+	if err := ioutil.WriteFile(filename, filedata, 0644); err != nil {
 		log.Print(err)
 		return
 	}
 
-	ext := chi.URLParam(r, "ext")
+	deleteCacheKeys([]string{"index-page"})
 
-	if ext == "jpg" && post.Mime == "image/jpeg" ||
-		ext == "png" && post.Mime == "image/png" ||
-		ext == "gif" && post.Mime == "image/gif" {
-		w.Header().Set("Content-Type", post.Mime)
-		_, err := w.Write(post.Imgdata)
-		if err != nil {
-			log.Print(err)
-			return
-		}
-		return
+	http.Redirect(w, r, "/posts/"+strconv.FormatInt(pid, 10), http.StatusFound)
+}
+
+// MIMEタイプからファイルの拡張子を決定
+func determineExtension(mime string) string {
+	switch mime {
+	case "image/jpeg":
+		return "jpg"
+	case "image/png":
+		return "png"
+	case "image/gif":
+		return "gif"
+	default:
+		return "bin"
 	}
+}
 
-	w.WriteHeader(http.StatusNotFound)
+// 呼ばれないはず
+func getImage(w http.ResponseWriter, r *http.Request) {
+	log.Fatal("getImage called")
+	//pidStr := chi.URLParam(r, "id")
+	//pid, err := strconv.Atoi(pidStr)
+	//if err != nil {
+	//	w.WriteHeader(http.StatusNotFound)
+	//	return
+	//}
+	//
+	//post := Post{}
+	//err = db.Get(&post, "SELECT * FROM `posts` WHERE `id` = ?", pid)
+	//if err != nil {
+	//	log.Print(err)
+	//	return
+	//}
+	//
+	//ext := chi.URLParam(r, "ext")
+	//
+	//if ext == "jpg" && post.Mime == "image/jpeg" ||
+	//	ext == "png" && post.Mime == "image/png" ||
+	//	ext == "gif" && post.Mime == "image/gif" {
+	//	w.Header().Set("Content-Type", post.Mime)
+	//	_, err := w.Write(post.Imgdata)
+	//	if err != nil {
+	//		log.Print(err)
+	//		return
+	//	}
+	//	return
+	//}
+	//
+	//w.WriteHeader(http.StatusNotFound)
 }
 
 func postComment(w http.ResponseWriter, r *http.Request) {
@@ -727,6 +595,15 @@ func postComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 削除したいキャッシュのキー
+	cacheKeys := []string{
+		fmt.Sprintf("post-%d", postID), // 例えば postID は適宜設定
+		"index-page",
+	}
+
+	// キャッシュ削除の実行
+	deleteCacheKeys(cacheKeys)
+
 	http.Redirect(w, r, fmt.Sprintf("/posts/%d", postID), http.StatusFound)
 }
 
@@ -743,7 +620,7 @@ func getAdminBanned(w http.ResponseWriter, r *http.Request) {
 	}
 
 	users := []User{}
-	err := db.Select(&users, "SELECT * FROM `users` WHERE `authority` = 0 AND `del_flg` = 0 ORDER BY `created_at` DESC")
+	err := db.Select(&users, "SELECT id AS user_id, account_name, passhash, authority, del_flg, created_at AS user_created_at FROM `users` WHERE `authority` = 0 AND `del_flg` = 0 ORDER BY `created_at` DESC")
 	if err != nil {
 		log.Print(err)
 		return
@@ -815,7 +692,7 @@ func main() {
 	}
 
 	dsn := fmt.Sprintf(
-		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=Local",
+		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=true&loc=Local&multiStatements=true&interpolateParams=true",
 		user,
 		password,
 		host,
@@ -830,6 +707,46 @@ func main() {
 	defer db.Close()
 
 	r := chi.NewRouter()
+
+	// TODO: もっと増やす
+	// TODO: 関数に移動
+	loadTemplate("get_login", getTemplPath("layout.html"), getTemplPath("login.html"))
+	loadTemplate("get_register", getTemplPath("layout.html"), getTemplPath("register.html"))
+	fmap := template.FuncMap{
+		"imageURL": imageURL,
+	}
+
+	indexTempl := template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+		getTemplPath("layout.html"),
+		getTemplPath("index.html"),
+		getTemplPath("posts.html"),
+		getTemplPath("post.html"),
+	))
+	templates["get_index"] = indexTempl
+
+	templates["get_post"] = template.Must(template.New("posts.html").Funcs(fmap).ParseFiles(
+		getTemplPath("posts.html"),
+		getTemplPath("post.html"),
+	))
+
+	templates["get_post_id"] = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+		getTemplPath("layout.html"),
+		getTemplPath("post_id.html"),
+		getTemplPath("post.html"),
+	))
+
+	templates["get_account_name"] = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
+		getTemplPath("layout.html"),
+		getTemplPath("user.html"),
+		getTemplPath("posts.html"),
+		getTemplPath("post.html"),
+	))
+
+	r.Use(middleware.Recoverer)
+
+	postsIdCounts = 0
+	indexCounts = 0
+	r.Mount("/debug", middleware.Profiler())
 
 	r.Get("/initialize", getInitialize)
 	r.Get("/login", getLogin)
@@ -851,4 +768,31 @@ func main() {
 	})
 
 	log.Fatal(http.ListenAndServe(":8080", r))
+}
+
+func loadTemplate(tmplName string, filename ...string) {
+	tmpl := template.Must(template.ParseFiles(filename...))
+
+	templates[tmplName] = tmpl
+}
+
+func deleteCacheKeys(cacheKeys []string) {
+	var wg sync.WaitGroup
+	for _, key := range cacheKeys {
+		wg.Add(1)
+		go func(key string) {
+			defer wg.Done()
+			err := memcacheClient.Delete(key)
+			if err != nil {
+				if err != memcache.ErrCacheMiss {
+					// 本当のエラーの場合のみログに記録する
+					log.Printf("Failed to delete cache for key %s: %v", key, err)
+				} else {
+					// キャッシュミスの場合、必要に応じて処理をする（例えば何もしない、またはデバッグログを出すなど）
+					// log.Printf("Cache miss for key %s, nothing to delete.", key)
+				}
+			}
+		}(key)
+	}
+	wg.Wait() // すべてのゴルーチンが終了するまで待つ
 }
